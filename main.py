@@ -47,7 +47,7 @@ def main():
 
     # model = Net(args) #create and load pretrained network
 
-    tuner = Finetuner(args, 1, logger) #import the network in a predefined class
+    tuner = Finetuner(args, logger) #import the network in a predefined class
 
     if args.cluster: #Clustering
         cluster_idx = tuner.cluster() #rank값을 아예 0으로 설정해두면 되지 않을까 (여기서 rank_w를 불러온 다음에 rank_w2를 불러오고)

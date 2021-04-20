@@ -16,8 +16,7 @@ from thop import profile
 import utils.common as utils
 
 class Finetuner:
-    def __init__(self, args, model, logger=None):
-        self.model = model
+    def __init__(self, args, logger=None):
         self.args = args
         self.logger = logger
 
@@ -27,7 +26,95 @@ class Finetuner:
         self.criterion = nn.CrossEntropyLoss()
         self.criterion = self.criterion.cuda()
 
-    def prune(self):
+        self.load_model(self.get_prune_ratio())
+
+    def load_model(self, compress_rate):
+        # load model (나중에 지우자@@@@@@@@@@@)
+        self.logger.info('compress_rate:' + str(compress_rate))
+        self.logger.info('==> Building model..')
+        self.model = eval(self.args.arch)(compress_rate=compress_rate).cuda()
+        self.logger.info(self.model)
+
+        # calculate model size
+        input_image_size = 32
+        input_image = torch.randn(1, 3, input_image_size, input_image_size).cuda()
+        flops, params = profile(self.model, inputs=(input_image,))
+        # flops, params = profile(self.model, inputs=(input_image,)) #이걸로 나중에 바꾸자
+        self.logger.info('Params: %.2f' % (params))
+        self.logger.info('Flops: %.2f' % (flops))
+
+        if self.args.test_only:
+            if os.path.isfile(self.args.test_model_dir):
+                self.logger.info('loading checkpoint {} ..........'.format(self.args.test_model_dir))
+                checkpoint = torch.load(self.args.test_model_dir)
+                self.model.load_state_dict(checkpoint['state_dict'])
+                valid_obj, valid_top1_acc, valid_top5_acc = self.validate(0, self.val_loader, self.model, self.criterion,
+                                                                          self.args)
+            else:
+                self.logger.info('please specify a checkpoint file')
+            return
+
+        if len(self.args.device_ids) > 1:
+            device_id = []
+            for i in range(len(self.args.device_ids)):
+                device_id.append(i)
+            self.model = nn.DataParallel(self.model, device_ids=device_id).cuda()
+
+        # load the checkpoint if it exists
+        checkpoint_dir = os.path.join(self.args.job_dir, 'checkpoint.pth.tar')
+        if self.args.resume:
+            self.logger.info('loading checkpoint {} ..........'.format(checkpoint_dir))
+            checkpoint = torch.load(checkpoint_dir)
+            start_epoch = checkpoint['epoch'] + 1
+            best_top1_acc = checkpoint['best_top1_acc']
+
+            # deal with the single-multi GPU problem
+            new_state_dict = OrderedDict()
+            tmp_ckpt = checkpoint['state_dict']
+            if len(self.args.gpu) > 1:
+                for k, v in tmp_ckpt.items():
+                    new_state_dict['module.' + k.replace('module.', '')] = v
+            else:
+                for k, v in tmp_ckpt.items():
+                    new_state_dict[k.replace('module.', '')] = v
+
+            self.model.load_state_dict(new_state_dict)
+            self.logger.info("loaded checkpoint {} epoch = {}".format(checkpoint_dir, checkpoint['epoch']))
+        else:
+            if self.args.use_pretrain:
+                self.logger.info('resuming from pretrain model')
+                origin_model = eval(self.args.arch)(compress_rate=[0.] * 100).cuda()
+                ckpt = torch.load(self.args.pretrain_dir, map_location=self.args.device)
+
+                # if args.arch=='resnet_56':
+                #    origin_model.load_state_dict(ckpt['state_dict'],strict=False)
+                if self.args.arch == 'densenet_40' or self.args.arch == 'resnet_110':
+                    new_state_dict = OrderedDict()
+                    for k, v in ckpt['state_dict'].items():
+                        new_state_dict[k.replace('module.', '')] = v
+                    origin_model.load_state_dict(new_state_dict)
+                else:
+                    origin_model.load_state_dict(ckpt['state_dict'])
+
+                oristate_dict = origin_model.state_dict()
+
+                # model: already compressed model, oristate_dict: parameters of the full model
+                if self.args.arch == 'googlenet':
+                    load_google_model(self.args, self.logger, self.model, oristate_dict)
+                elif self.args.arch == 'vgg_16_bn':
+                    load_vgg_model(self.args, self.logger, self.model, oristate_dict)
+                elif self.args.arch == 'resnet_56':
+                    load_resnet_model(self.args, self.logger, self.model, oristate_dict, 56)
+                elif self.args.arch == 'resnet_110':
+                    load_resnet_model(self.args, self.logger, self.model, oristate_dict, 110)
+                elif self.args.arch == 'densenet_40':
+                    load_densenet_model(self.args, self.logger, self.model, oristate_dict)
+                else:
+                    raise
+            else:
+                self.logger.info('training from scratch')
+
+    def get_prune_ratio(self):
         if self.args.compress_rate:
             import re
             cprate_str = self.args.compress_rate
@@ -67,97 +154,15 @@ class Finetuner:
             }
             compress_rate = default_cprate[self.args.arch]
 
-        # load model (나중에 지우자@@@@@@@@@@@)
-        self.logger.info('compress_rate:' + str(compress_rate))
-        self.logger.info('==> Building model..')
-        model = eval(self.args.arch)(compress_rate=compress_rate).cuda()
-        self.logger.info(model)
+            return compress_rate
 
-        # calculate model size
-        input_image_size = 32
-        input_image = torch.randn(1, 3, input_image_size, input_image_size).cuda()
-        flops, params = profile(model, inputs=(input_image,))
-        # flops, params = profile(self.model, inputs=(input_image,)) #이걸로 나중에 바꾸자
-        self.logger.info('Params: %.2f' % (params))
-        self.logger.info('Flops: %.2f' % (flops))
-
-        if self.args.test_only:
-            if os.path.isfile(self.args.test_model_dir):
-                self.logger.info('loading checkpoint {} ..........'.format(self.args.test_model_dir))
-                checkpoint = torch.load(self.args.test_model_dir)
-                model.load_state_dict(checkpoint['state_dict'])
-                valid_obj, valid_top1_acc, valid_top5_acc = validate(0, self.val_loader, model, self.criterion, self.args)
-            else:
-                self.logger.info('please specify a checkpoint file')
-            return
-
-        if len(self.args.gpu) > 1:
-            device_id = []
-            for i in range((len(self.args.gpu) + 1) // 2):
-                device_id.append(i)
-            model = nn.DataParallel(model, device_ids=device_id).cuda()
-
-        optimizer = torch.optim.SGD(model.parameters(), lr=self.args.lr, momentum=self.args.momentum, weight_decay=self.args.wd)
+    def prune(self):
+        optimizer = torch.optim.SGD(self.model.parameters(), lr=self.args.lr, momentum=self.args.momentum, weight_decay=self.args.wd)
         # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)  # 이걸 쓰는건
         scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=self.args.lr_decay_step, gamma=0.1)
 
         start_epoch = 0
         best_top1_acc = 0
-
-        # load the checkpoint if it exists
-        checkpoint_dir = os.path.join(self.args.job_dir, 'checkpoint.pth.tar')
-        if self.args.resume:
-            self.logger.info('loading checkpoint {} ..........'.format(checkpoint_dir))
-            checkpoint = torch.load(checkpoint_dir)
-            start_epoch = checkpoint['epoch'] + 1
-            best_top1_acc = checkpoint['best_top1_acc']
-
-            # deal with the single-multi GPU problem
-            new_state_dict = OrderedDict()
-            tmp_ckpt = checkpoint['state_dict']
-            if len(self.args.gpu) > 1:
-                for k, v in tmp_ckpt.items():
-                    new_state_dict['module.' + k.replace('module.', '')] = v
-            else:
-                for k, v in tmp_ckpt.items():
-                    new_state_dict[k.replace('module.', '')] = v
-
-            model.load_state_dict(new_state_dict)
-            self.logger.info("loaded checkpoint {} epoch = {}".format(checkpoint_dir, checkpoint['epoch']))
-        else:
-            if self.args.use_pretrain:
-                self.logger.info('resuming from pretrain model')
-                origin_model = eval(self.args.arch)(compress_rate=[0.] * 100).cuda()
-                ckpt = torch.load(self.args.pretrain_dir, map_location=self.args.device)
-
-                # if args.arch=='resnet_56':
-                #    origin_model.load_state_dict(ckpt['state_dict'],strict=False)
-                if self.args.arch == 'densenet_40' or self.args.arch == 'resnet_110':
-                    new_state_dict = OrderedDict()
-                    for k, v in ckpt['state_dict'].items():
-                        new_state_dict[k.replace('module.', '')] = v
-                    origin_model.load_state_dict(new_state_dict)
-                else:
-                    origin_model.load_state_dict(ckpt['state_dict'])
-
-                oristate_dict = origin_model.state_dict()
-
-                #model: already compressed model, oristate_dict: parameters of the full model
-                if self.args.arch == 'googlenet':
-                    load_google_model(self.args, self.logger, model, oristate_dict)
-                elif self.args.arch == 'vgg_16_bn':
-                    load_vgg_model(self.args, self.logger, model, oristate_dict)
-                elif self.args.arch == 'resnet_56':
-                    load_resnet_model(self.args, self.logger, model, oristate_dict, 56)
-                elif self.args.arch == 'resnet_110':
-                    load_resnet_model(self.args, self.logger, model, oristate_dict, 110)
-                elif self.args.arch == 'densenet_40':
-                    load_densenet_model(self.args, self.logger, model, oristate_dict)
-                else:
-                    raise
-            else:
-                self.logger.info('training from scratch')
-
         # adjust the learning rate according to the checkpoint
         for epoch in range(start_epoch):
             scheduler.step()
@@ -165,9 +170,9 @@ class Finetuner:
         # train the model
         epoch = start_epoch
         while epoch < self.args.epochs:
-            train_obj, train_top1_acc, train_top5_acc = self.train(epoch, self.train_loader, model, self.criterion, optimizer,
+            train_obj, train_top1_acc, train_top5_acc = self.train(epoch, self.train_loader, self.model, self.criterion, optimizer,
                                                               scheduler)
-            valid_obj, valid_top1_acc, valid_top5_acc = self.validate(epoch, self.val_loader, model, self.criterion)
+            valid_obj, valid_top1_acc, valid_top5_acc = self.validate(epoch, self.val_loader, self.model, self.criterion)
 
             is_best = False
             if valid_top1_acc > best_top1_acc:
@@ -176,7 +181,7 @@ class Finetuner:
 
             utils.save_checkpoint({
                 'epoch': epoch,
-                'state_dict': model.state_dict(),
+                'state_dict': self.model.state_dict(),
                 'best_top1_acc': best_top1_acc,
                 'optimizer': optimizer.state_dict(),
             }, is_best, self.args.job_dir)
