@@ -11,7 +11,7 @@ from models.cifar10.densenet import densenet_40
 from models.load_model import load_vgg_model, load_google_model, load_resnet_model, load_densenet_model
 
 from collections import OrderedDict
-from data import cifar10
+from data import cifar10, imagenet
 from thop import profile
 import utils.common as utils
 
@@ -21,10 +21,23 @@ class Finetuner:
         self.logger = logger
 
         # load training data
-        self.train_loader, self.val_loader = cifar10.load_data(self.args)
+        self.input_image_size = {
+            "cifar10": 32,  # CIFAR-10
+            "imagenet": 224,  # ImageNet
+        }[self.args.dataset]
 
-        self.criterion = nn.CrossEntropyLoss()
-        self.criterion = self.criterion.cuda()
+        if self.args.dataset == 'cifar10':
+            self.train_loader, self.val_loader = cifar10.load_data(self.args)
+        else:
+            data_tmp = imagenet.Data(args)
+            self.train_loader = data_tmp.train_loader
+            self.val_loader = data_tmp.test_loader
+
+        #Cifar-10
+        self.criterion = nn.CrossEntropyLoss().cuda()
+        #ImageNet
+        CLASSES = 1000 #label_smooth: 0.1
+        self.criterion_smooth = utils.CrossEntropyLabelSmooth(CLASSES, 0.1).cuda()
 
         self.load_model(self.get_prune_ratio())
 
@@ -35,11 +48,9 @@ class Finetuner:
         self.model = eval(self.args.arch)(compress_rate=compress_rate).cuda()
         self.logger.info(self.model)
 
-        # calculate model size
-        input_image_size = 32
-        input_image = torch.randn(1, 3, input_image_size, input_image_size).cuda()
+        # compute flops and params
+        input_image = torch.randn(1, 3, self.input_image_size, self.input_image_size).cuda()
         flops, params = profile(self.model, inputs=(input_image,))
-        # flops, params = profile(self.model, inputs=(input_image,)) #이걸로 나중에 바꾸자
         self.logger.info('Params: %.2f' % (params))
         self.logger.info('Flops: %.2f' % (flops))
 
@@ -158,11 +169,15 @@ class Finetuner:
 
     def prune(self):
         optimizer = torch.optim.SGD(self.model.parameters(), lr=self.args.lr, momentum=self.args.momentum, weight_decay=self.args.wd)
-        # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)  # 이걸 쓰는건
-        scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=self.args.lr_decay_step, gamma=0.1)
+        if self.args.dataset == 'cifar10':
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.args.epochs)
+        else:
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.args.epochs, eta_min = 0.0004)
+        # scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=self.args.lr_decay_step, gamma=0.1)
 
         start_epoch = 0
         best_top1_acc = 0
+        best_top5_acc = 0
         # adjust the learning rate according to the checkpoint
         for epoch in range(start_epoch):
             scheduler.step()
@@ -170,8 +185,7 @@ class Finetuner:
         # train the model
         epoch = start_epoch
         while epoch < self.args.epochs:
-            train_obj, train_top1_acc, train_top5_acc = self.train(epoch, self.train_loader, self.model, self.criterion, optimizer,
-                                                              scheduler)
+            train_obj, train_top1_acc, train_top5_acc = self.train(epoch, self.train_loader, self.model, self.criterion, optimizer, scheduler)
             valid_obj, valid_top1_acc, valid_top5_acc = self.validate(epoch, self.val_loader, self.model, self.criterion)
 
             is_best = False
@@ -274,3 +288,13 @@ class Finetuner:
                   .format(top1=top1, top5=top5))
 
         return losses.avg, top1.avg, top5.avg
+
+    def cluster(self):
+        self.cluster_mask = []
+
+    def compress_model(self, mask_cluster, mask_pruning):
+        mask = mask_cluster and mask_pruning
+
+    def decompose(self):
+        self.model = []
+

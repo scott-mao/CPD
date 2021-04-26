@@ -3,13 +3,6 @@ import argparse
 def get_args():
     parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
     parser.add_argument(
-        '--data_dir',
-        type=str,
-        default='./data',
-        # default='/ssd8/jhhwang/imagenet',
-        help='dataset path')
-
-    parser.add_argument(
         '--epochs',
         type=int,
         default=200,
@@ -115,9 +108,10 @@ def get_args():
     parser.add_argument(
         '--arch',
         type=str,
-        default='resnet_56',
-        choices=('resnet_50', 'vgg_16_bn', 'resnet_56', 'resnet_110', 'densenet_40', 'googlenet'),
+        default='googlenet',
+        choices=('vgg_16_bn', 'resnet_56', 'resnet_110', 'densenet_40', 'googlenet', 'resnet_50', 'mobilenet_v1', 'mobilenet_v2'),
         help='The architecture to prune')
+
     parser.add_argument(
         '--pr_step',
         type=float,
@@ -177,6 +171,12 @@ def get_args():
     args = parser.parse_args()
     args.rank_conv_prefix = args.rank_conv_prefix + args.arch + '_limit10'
     args.pretrain_dir = args.pretrain_dir + args.arch + '.pt'
+
+    # Data Acquisition
+    args.data_dir = {
+        "cifar10": './data',  # CIFAR-10
+        "imagenet": '/ssd8/jhhwang/imagenet',  # ImageNet
+    }[args.dataset]
 
     if args.arch == 'resnet_50':
         args.resume = args.resume + 'h'

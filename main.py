@@ -11,7 +11,12 @@ from modules.finetuner import Finetuner
 
 args = get_args()
 
-args.print_freq = (256*50)//args.batch_size
+# Data Acquisition
+args.print_freq = {
+    "cifar10": (256*50)//args.batch_size,  # CIFAR-10
+    "imagenet": 128000//args.batch_size,  # ImageNet
+}[args.dataset]
+
 os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
 args.device_ids = list(map(int, args.gpu.split(',')))
 args.lr_decay_step = list(map(int, args.lr_decay_step.split(',')))
@@ -50,10 +55,10 @@ def main():
     tuner = Finetuner(args, logger) #import the network in a predefined class
 
     if args.cluster: #Clustering
-        cluster_idx = tuner.cluster() #rank값을 아예 0으로 설정해두면 되지 않을까 (여기서 rank_w를 불러온 다음에 rank_w2를 불러오고)
+        tuner.cluster() #rank값을 아예 0으로 설정해두면 되지 않을까 (여기서 rank_w를 불러온 다음에 rank_w2를 불러오고)
 
     if args.prune: #Pruning
-        prune_idx = tuner.prune() #rank_w2를 불러서 pruning을 함
+        tuner.prune() #rank_w2를 불러서 pruning을 함
 
     if args.decompose: #Filter Decomposition
         tuner.decompose()
@@ -61,4 +66,4 @@ def main():
     end_t = time.time()
 
 if __name__ == '__main__':
-  main()
+    main()
