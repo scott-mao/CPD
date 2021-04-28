@@ -143,6 +143,13 @@ def get_args():
     )
 
     parser.add_argument(
+        '--decomposition_method',
+        type=str,
+        default='tucker',
+        choices=('cp', 'tucker'),
+        help='The decomposition method')
+
+    parser.add_argument(
         '--cluster',
         type=bool,
         default=False,
