@@ -51,8 +51,8 @@ def get_args():
 
     parser.add_argument(
         '--use_pretrain',
-        # action='store_true',
-        default=True,
+        default=False,
+        action='store_true',
         help='whether use pretrain model')
 
     parser.add_argument(
@@ -137,8 +137,8 @@ def get_args():
     )
     parser.add_argument(
         '--energy',
-        type=bool,
         default=False,
+        action='store_true',
         help='use energy as a criterion'
     )
 
@@ -151,22 +151,22 @@ def get_args():
 
     parser.add_argument(
         '--cluster',
-        type=bool,
         default=False,
+        action='store_true',
         help='switch for filter clustering'
     )
 
     parser.add_argument(
         '--prune',
-        type=bool,
-        default=True,
+        default=False,
+        action='store_true',
         help='switch for filter pruning'
     )
 
     parser.add_argument(
         '--decompose',
-        type=bool,
         default=False,
+        action='store_true',
         help='switch for filter decomposition'
     )
 
@@ -186,7 +186,7 @@ def get_args():
     }[args.dataset]
 
     if args.arch == 'resnet_50':
-        args.resume = args.resume + 'h'
+        args.pretrain_dir = args.pretrain_dir + 'h'
 
     return args
 

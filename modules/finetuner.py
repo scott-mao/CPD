@@ -3,6 +3,7 @@ import time, datetime
 
 import torch
 import torch.nn as nn
+import tensorly as tl
 
 from models.cifar10.vgg import vgg_16_bn
 from models.cifar10.resnet import resnet_56, resnet_110
@@ -13,8 +14,8 @@ from models.load_model import load_vgg_model, load_google_model, load_resnet_mod
 from collections import OrderedDict
 from data import cifar10, imagenet
 from thop import profile
-from decomp import cp_decomp, tucker_decomp
-from TVBMF import EVBMF
+from modules.decomp import cp_decomp, tucker_decomp
+from modules.TVBMF import EVBMF
 import utils.common as utils
 
 class Finetuner:
@@ -95,6 +96,7 @@ class Finetuner:
             self.logger.info("loaded checkpoint {} epoch = {}".format(checkpoint_dir, checkpoint['epoch']))
         else:
             if self.args.use_pretrain:
+                print(f"self.args.use_pretrain = {self.args.use_pretrain}\n")
                 self.logger.info('resuming from pretrain model')
                 origin_model = eval(self.args.arch)(compress_rate=[0.] * 100).cuda()
                 ckpt = torch.load(self.args.pretrain_dir, map_location=self.args.device)
@@ -298,7 +300,7 @@ class Finetuner:
         mask = mask_cluster and mask_pruning
 
 
-    def tucker_rank(layer):
+    def tucker_rank(self, layer):
         W = layer.weight.data
         mode3 = tl.base.unfold(W, 0)
         mode4 = tl.base.unfold(W, 1)
@@ -316,7 +318,7 @@ class Finetuner:
         return [int(np.ceil(d1 / 16) * 16), int(np.ceil(d2 / 16) * 16)]
 
 
-    def est_rank(layer):
+    def est_rank(self, layer):
         W = layer.weight.data
         mode3 = tl.base.unfold(W, 0)
         mode4 = tl.base.unfold(W, 1)
@@ -328,10 +330,10 @@ class Finetuner:
 
 
     def decompose(self):
-        rank_func = tucker_rank if args.decomposition_method=="tucker" else est_rank
-        decomp_func = tucker_decomp if args.decomposition_method=="tucker" else cp_decomp
+        rank_func = self.tucker_rank if self.args.decomposition_method=="tucker" else self.est_rank
+        decomp_func = tucker_decomp if self.args.decomposition_method=="tucker" else cp_decomp
 
-        if self.args.arch == "resnet_50":
+        if self.args.arch == "resnet_56":
             mulfunc = (lambda x,y:x*y)
             for n, m in self.model.named_children():
                 num_children = sum(1 for i in m.children())
