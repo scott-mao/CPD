@@ -49,7 +49,9 @@ def cp_decomp(layer, rank):
 def tucker_decomp(layer, rank):
     W = layer.weight.data
 
-    core, [last, first] = partial_tucker(W, modes=[0,1], ranks=rank, init='svd')
+    # TODO: find how to init when SVD already computed
+    # http://tensorly.org/stable/_modules/tensorly/decomposition/_tucker.html
+    core, [last, first] = partial_tucker(W, modes=[0,1], rank=rank, init='svd')
 
     first_layer = nn.Conv2d(in_channels=first.shape[0],
                                        out_channels=first.shape[1],

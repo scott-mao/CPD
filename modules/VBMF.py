@@ -1,11 +1,9 @@
+
 from __future__ import division
 
-import torch
 import numpy as np
-# from scipy.sparse.linalg import svds
+from scipy.sparse.linalg import svds
 from scipy.optimize import minimize_scalar
-
-
 
 def EVBMF(Y, sigma2=None, H=None):
     """Implementation of the analytical solution to Empirical Variational Bayes Matrix Factorization.
@@ -32,18 +30,8 @@ def EVBMF(Y, sigma2=None, H=None):
         
     Returns
     -------
-    U : numpy-array
-        Left-singular vectors. 
-        
     S : numpy-array
         Diagonal matrix of singular values.
-        
-    V : numpy-array
-        Right-singular vectors.
-        
-    post : dictionary
-        Dictionary containing the computed posterior values.
-        
         
     References
     ----------
@@ -53,52 +41,72 @@ def EVBMF(Y, sigma2=None, H=None):
     """   
     L,M = Y.shape #has to be L<=M
 
+    print(f"Y: {Y}")
+
     if H is None:
         H = L
 
+    print(f"L: {L}")
+    print(f"M: {M}")
+    print(f"H: {H}")
+
     alpha = L/M
     tauubar = 2.5129*np.sqrt(alpha)
+
+    print(f"alpha: {alpha}")
+    print(f"tauubar: {tauubar}")
     
     #SVD of the input matrix, max rank of H
-    U,s,V = torch.svd(Y)
-    U = U[:,:H]
+    _,s,_ = np.linalg.svd(Y)
     s = s[:H]
-    V[:H].t_() 
+
+    print(f"s: {s}")
 
     #Calculate residual
     residual = 0.
     if H<L:
-        residual = torch.sum(torch.sum(Y**2)-torch.sum(s**2))
+        residual = np.sum(np.sum(Y**2)-np.sum(s**2))
 
     #Estimation of the variance when sigma2 is unspecified
     if sigma2 is None: 
         xubar = (1+tauubar)*(1+alpha/tauubar)
+        print(f"xubar: {xubar}")
         eH_ub = int(np.min([np.ceil(L/(1+alpha))-1, H]))-1
-        upper_bound = (torch.sum(s**2)+residual)/(L*M)
-        lower_bound = np.max([s[eH_ub+1]**2/(M*xubar), torch.mean(s[eH_ub+1:]**2)/M])
+        print(f"eH_ub: {eH_ub}")
+        upper_bound = (np.sum(s**2)+residual)/(L*M)
+        lower_bound = np.max([s[eH_ub+1]**2/(M*xubar), np.mean(s[eH_ub+1:]**2)/M])
+        print(f"upper_bound: {upper_bound}")
+        print(f"lower_bound: {lower_bound}")
 
         scale = 1.#/lower_bound
         s = s*np.sqrt(scale)
+        print(f"s: {s}")
         residual = residual*scale
         lower_bound = lower_bound*scale
         upper_bound = upper_bound*scale
+        print(f"upper_bound: {upper_bound}")
+        print(f"lower_bound: {lower_bound}")
 
         sigma2_opt = minimize_scalar(EVBsigma2, args=(L,M,s,residual,xubar), bounds=[lower_bound, upper_bound], method='Bounded')
+        print(f"sigma2_opt: {sigma2_opt}")
         sigma2 = sigma2_opt.x
+        print(f"sigma2: {sigma2}")
 
     #Threshold gamma term
+    print(f"M: {M}")
+    print(f"M*sigma2: {M*sigma2}")
+    print(f"1+tauubar: {1+tauubar}")
+    print(f"alpha/tauubar: {alpha/tauubar}")
+    print(f"1+alpha/tauubar: {1+alpha/tauubar}")
+    print(f"M*sigma2*(1+tauubar): {M*sigma2*(1+tauubar)}")
+    print(f"M*sigma2*(1+tauubar)*(1+alpha/tauubar): {M*sigma2*(1+tauubar)*(1+alpha/tauubar)}")
     threshold = np.sqrt(M*sigma2*(1+tauubar)*(1+alpha/tauubar))
-
-    pos = torch.sum(s>threshold)
-    if pos == 0: return np.array([])
+    print(f"threshold: {threshold}")
+    pos = np.sum(s>threshold)
 
     #Formula (15) from [2]
-    d = torch.mul(s[:pos]/2, \
-    1-(L+M)*sigma2/s[:pos]**2 + torch.sqrt( \
-    (1-((L+M)*sigma2)/s[:pos]**2)**2 - \
-    (4*L*M*sigma2**2)/s[:pos]**4) )
-
-    return torch.diag(d)
+    d = np.multiply(s[:pos]/2, 1-np.divide((L+M)*sigma2, s[:pos]**2) + np.sqrt((1-np.divide((L+M)*sigma2, s[:pos]**2))**2 -4*L*M*sigma2**2/s[:pos]**4) )
+    return np.diag(d)
 
 def EVBsigma2(sigma2,L,M,s,residual,xubar):
     H = len(s)
@@ -110,15 +118,18 @@ def EVBsigma2(sigma2,L,M,s,residual,xubar):
     z2 = x[x<=xubar]
     tau_z1 = tau(z1, alpha)
 
-    term1 = torch.sum(z2 - torch.log(z2))
-    term2 = torch.sum(z1 - tau_z1)
-    term3 = torch.sum(torch.log( (tau_z1+1) / z1 ))
-    term4 = alpha*torch.sum(torch.log(tau_z1/alpha+1))
+    term1 = np.sum(z2 - np.log(z2))
+    term2 = np.sum(z1 - tau_z1)
+    term3 = np.sum( np.log( np.divide(tau_z1+1, z1)))
+    term4 = alpha*np.sum(np.log(tau_z1/alpha+1))
     
     obj = term1+term2+term3+term4+ residual/(M*sigma2) + (L-H)*np.log(sigma2)
 
     return obj
 
-
 def tau(x, alpha):
-    return 0.5 * (x-(1+alpha) + torch.sqrt((x-(1+alpha))**2 - 4*alpha))
+    return 0.5 * (x-(1+alpha) + np.sqrt((x-(1+alpha))**2 - 4*alpha))
+
+
+
+
